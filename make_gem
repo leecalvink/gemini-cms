@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#
+# Variables
+post_dir=/srv/gem/posts
+index_file=/srv/gem/index.gmi
+
+# Prompt the user for the post title and assign it to a variable
+echo "Enter the post title:"
+read title
+
+# Prompt the user for the post body and save it to a temporary file
+echo "Enter the post body (press Ctrl+D when done):"
+tmpfile=$(mktemp)
+cat > $tmpfile
+
+# Generate the post filename using the date and title
+date=$(date +%Y-%m-%d)
+filename="$date-$title.gmi"
+
+# Get a list of all Gemini blog post filenames, excluding the index file
+postfiles=($(ls -1 "$post_dir"/*.gmi | grep -v "index.gmi"))
+
+# Sort the list by date in reverse order
+IFS=$'\n' postfiles=($(sort -r <<<"${postfiles[*]}"))
+unset IFS
+
+# Find the index of the current post filename in the list, accounting for the possibility that the list may not include the index file
+index=-1
+for i in "${!postfiles[@]}"; do
+  if [[ "${postfiles[$i]}" = "$post_dir/$filename" ]]; then
+    index=$i
+    break
+  fi
+done
+
+# Generate links to the previous and next posts, if they exist
+if [[ $index -gt 0 ]]; then
+  prevpost="${postfiles[$((index-1))]}"
+  echo "=> $prevpost Previous Post" >> "$post_dir/$filename"
+fi
+
+if [[ $index -lt $((${#postfiles[@]}-1)) ]]; then
+  nextpost="${postfiles[$((index+1))]}"
+  echo "=> $nextpost Next Post" >> "$post_dir/$filename"
+fi
+
+# Create the post file with the Gemini header, the post body, and the links
+cat << EOF > "$post_dir/$filename"
+## $title
+
+=> /
+
+$(cat $tmpfile)
+
+EOF
+
+# Remove the temporary file
+rm $tmpfile
+
+# Display a message with the post filename
+echo "Post created: $post_dir/$filename"
+
+# Update the recent posts section in the index file, excluding the index file
+recent_posts=$(echo "## Recent Posts")
+for post in $(ls -1t $post_dir/*.gmi | grep -v "index.gmi" | head -n 3); do
+  filename=$(basename "$post")
+  date=$(echo "$filename" | cut -d'-' -f1)
+  title=$(echo "$filename" | cut -d'-' -f2- | sed 's/\.gmi$//')
+  recent_posts=$(echo "$recent_posts\n=> $post $date $title")
+done
+sed -i "/^## Recent Posts/,/^##/c$recent_posts" $index_file
+
+# Update the posts listing in the index file, excluding the index file
+year=$(echo $filename | cut -d'-' -f1)
+year_header="## $year"
+post_link="=> $filename $(date +"%m/%d") - $title"
+line_num=$(grep -n "$year_header" $index_file | cut -d: -f1)
+if [ -z "$line_num" ]; then
+  # If the year header is not found, insert a new section at the beginning of the file
+  echo -e "$year_header\n$post_link" | cat - $index_file > /tmp/index_file && mv /tmp/index_file $index_file
+else
+  # If the year header is found, insert the new post link after the header
+  sed -i "${line_num}a$post_link" $index_file
+fi
+
